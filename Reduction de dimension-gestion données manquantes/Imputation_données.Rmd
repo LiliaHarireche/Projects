@@ -1,0 +1,732 @@
+---
+title: " TP: Imputation de données manquantes"
+output: html_document
+---
+
+
+
+                                  Lilia HARIRECHE - MLDS FA
+                                              
+                                  
+
+
+# 1. Dataset: Papillon
+
+## (1) Chargement du dataset et pré-traitement
+
+```{r message=FALSE, warning=FALSE}
+library(Hmisc)
+```
+
+```{r}
+papillons <- read.table('papillons.txt', header=TRUE, row.names='num')
+```
+
+**création de données manquantes**
+
+La fonction ci dessous permet de créer les données manquantes avec différents ratios.
+
+```{r}
+get_missing_values <- function(data, test.ratio){
+  
+  IND=which(!is.na(data),arr.ind=TRUE)
+  ntest=ceiling(dim(data)[1]*dim(data)[2]*test.ratio)
+  ind.test=IND[sample(1:dim(IND)[1],ntest),]
+  # Création des données manquantes
+  dat.test=data[ind.test]
+  dat.train=data
+  dat.train[ind.test]=NA
+  return(dat.train)
+  
+}
+```
+
+## (2) Génération des tableaux avec données manquantes
+
+```{r}
+papillon_NA_5  <- get_missing_values(papillons,0.05) 
+papillon_NA_15 <- get_missing_values(papillons,0.15)
+papillon_NA_20 <- get_missing_values(papillons,0.20)
+papillon_NA_25 <- get_missing_values(papillons,0.25)
+papillon_NA_30 <- get_missing_values(papillons,0.30)
+```
+
+## (3) Imputation par la moyenne
+
+```{r eval=FALSE}
+papillon_moy_5 = impute(papillon_NA_5, fun=mean)
+pca_papillon_moy_5 = PCA(papillon_moy_5)
+```
+Nous remarquons que l'utilisation de *impute()* renvoit une erreur, pour cela nous avons opté pour l'utilisation de *simple.impute()*
+
+
+```{r message=FALSE, warning=FALSE}
+library(useful)
+```
+
+
+```{r warning=FALSE, message=FALSE}
+papillon_moy_5 = simple.impute.data.frame(papillon_NA_5, fun=mean)
+papillon_moy_15 = simple.impute.data.frame(papillon_NA_15, fun=mean)
+papillon_moy_20 = simple.impute.data.frame(papillon_NA_20, fun=mean)
+papillon_moy_25 = simple.impute.data.frame(papillon_NA_25, fun=mean)
+papillon_moy_30 = simple.impute.data.frame(papillon_NA_30, fun=mean)
+```
+
+Les datasets ci dessus sont obtenus après imputation par la moyenne.
+
+## (4) Application de l'ACP (moyenne)
+
+```{r message=FALSE, warning=FALSE}
+library(FactoMineR)
+library(cowplot)  # plot.PCA
+```
+
+
+- Appliquer l'ACP sur le jeu de données papillons
+
+```{r}
+pca = PCA(papillons)
+```
+
+- La fonction *pca.compare.plot()* créée ci dessous, permet de comparer entre les différents plans factoriels après réalisation de l'ACP sur chaque tableau complété dans la partie suivante.
+
+```{r}
+pca.compare.plot <- function(pca, pca.completed, titre){
+  
+  fig1 <- plot.PCA(pca, label='none', title='PCA of the original data')
+  fig2 <- plot.PCA(pca.completed, label='none', title = titre)
+  plot_grid(fig1, fig2, labels = "AUTO")
+  
+}
+```
+
+- Réalisons l'ACP et appliquond la fonction créée précedemment, ce qui permet de comparer entre Le plan factoriel de dataset original avec ceux des tableaux complétés.
+
+```{r  fig.width=13, fig.height=4}
+pca_papillon_moy_5 = PCA(papillon_moy_5, graph=FALSE)
+pca.compare.plot(pca,pca_papillon_moy_5, 'PCA with imputed data (5% NA)')
+
+pca_papillon_moy_15 = PCA(papillon_moy_15, graph=FALSE)
+pca.compare.plot(pca,pca_papillon_moy_15, 'PCA with imputed data (15% NA)')
+
+pca_papillon_moy_20 = PCA(papillon_moy_20, graph=FALSE)
+pca.compare.plot(pca,pca_papillon_moy_20, 'PCA with imputed data (20% NA)')
+
+pca_papillon_moy_25 = PCA(papillon_moy_25, graph=FALSE)
+pca.compare.plot(pca,pca_papillon_moy_25, 'PCA with imputed data (25% NA)')
+
+pca_papillon_moy_30 = PCA(papillon_moy_30, graph=FALSE)
+pca.compare.plot(pca,pca_papillon_moy_30, 'PCA with imputed data (30% NA)')
+
+```
+La qualité de l'imputation se dégrade (que ce soit vis à vis de la représentation sur 
+le premier plan factoriel ou sur le poids des premiers composantes) en fonction du nombre 
+de données manquantes malgré un regain de vraisemblance pour le jeu de données avec 20% de 
+données manquantes.
+
+
+## (5) Utiliser MissMDA pour imputer les données manquantes.
+
+```{r message=FALSE, warning=FALSE}
+library(missMDA)
+```
+
+```{r}
+nb <- estim_ncpPCA(papillon_NA_5, scale=TRUE)
+papillon_missMDA_5 <- imputePCA(papillon_NA_5, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(papillon_NA_15, scale=TRUE)
+papillon_missMDA_15 <- imputePCA(papillon_NA_15, ncp=nb$ncp, scale = TRUE) 
+```
+
+
+```{r}
+nb <- estim_ncpPCA(papillon_NA_20, scale=TRUE)# ici ncp = 0 
+papillon_missMDA_20 <- imputePCA(papillon_NA_20, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(papillon_NA_25, scale=TRUE)
+papillon_missMDA_25 <- imputePCA(papillon_NA_25, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(papillon_NA_30, scale=TRUE)
+papillon_missMDA_30 <- imputePCA(papillon_NA_30, ncp=nb$ncp, scale = TRUE)
+```
+
+L'estimateur npcPCA indique que le nombre optimal de composante principales pour l'imputation est 0 : 
+cette considération implique que cela revient à imputer les valeurs manquantes par la moyenne.
+
+En effet pour approcher un individu  
+<!-- https://datascience.stackexchange.com/questions/31804/sklearn-pca-with-zero-components-example -->
+
+## (6) Application de l'ACP  (missMDA)
+
+- Appliquer l'ACP sur le jeu de données papillons
+
+```{r}
+pca = PCA(papillons, graph=FALSE)
+```
+
+- La fonction *pca.missMDA.compare.plot()*, créée ci-dessous, permet de comparer entre les différents plans factoriels après réalisation de l'ACP sur chaque tableau complété dans la partie suivante.
+
+```{r}
+pca.missMDA.compare.plot <- function(pca, pca.completed, titre){
+  
+  fig1 <- plot.PCA(pca, label='none', title='PCA of the original data')
+  fig2 <- plot.PCA(pca.completed, label='none', title = titre)
+  plot_grid(fig1, fig2, labels = "AUTO")
+  
+}
+```
+
+- Comparons les PCA avec imputation par la méthode missMDA et la PCA sur les données d'origine
+
+```{r  fig.width=13, fig.height=4}
+pca_papillon_missMDA_5 <- PCA(papillon_missMDA_5$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_papillon_missMDA_5, 'PCA of imputed data with missMDA (5% NA)')
+
+pca_papillon_missMDA_15 = PCA(papillon_missMDA_15$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_papillon_missMDA_15, 'PCA of imputed data with missMDA (15% NA)')
+
+pca_papillon_missMDA_20 = PCA(papillon_missMDA_20$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_papillon_missMDA_20, 'PCA of imputed data with missMDA (20% NA)')
+
+pca_papillon_missMDA_25 = PCA(papillon_missMDA_25$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_papillon_missMDA_25, 'PCA of imputed data with missMDA (25% NA)')
+
+pca_papillon_missMDA_30 = PCA(papillon_missMDA_30$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_papillon_missMDA_30, 'PCA of imputed data with missMDA (30% NA)')
+```
+Les résultats sont similaires à ceux présentés dans la partie 4.
+
+**N.B.** Les résultats pour les imputations à 20, 25 et 30% sont les mêmes que pour l'imputation par la moyenne, comme expliqué en question (5)
+
+## (7) Application de la méthode NIPALS
+
+```{r message=FALSE, warning=FALSE}
+library(plsdepot)
+```
+
+L'algorithme NIPALS permet de faire une analyse en composantes principales :
+
+```{r}
+pap.nipals = nipals(papillons,comps=2)
+```
+
+La méthode NIPALS repose sur cet algorithme et permet d'imputer les données manquantes. 
+
+```{r}
+pap.nipals_5 = plsdepot::nipals(papillon_NA_5,comps=2)
+pap.nipals_15 = plsdepot::nipals(papillon_NA_15,comps=2)
+pap.nipals_20 = plsdepot::nipals(papillon_NA_20,comps=2)
+pap.nipals_25 = plsdepot::nipals(papillon_NA_25,comps=2)
+pap.nipals_30 = plsdepot::nipals(papillon_NA_30,comps=2)
+```
+
+On peut alors représenter les premiers plans factioriels pour chacunes des imputations.
+
+```{r}
+plot(pap.nipals, what="observations", main='PCA of the original data')
+plot(pap.nipals_5, what="observations", main='PCA of imputed data with NIPALS (5% NA)')
+plot(pap.nipals_15, what="observations", main='PCA of imputed data with NIPALS (15% NA)')
+plot(pap.nipals_20, what="observations", main='PCA of imputed data with NIPALS (20% NA)')
+plot(pap.nipals_25, what="observations", main='PCA of imputed data with NIPALS (25% NA)')
+plot(pap.nipals_30, what="observations", main='PCA of imputed data with NIPALS (30% NA)')
+```
+
+## (8)
+
+Comparons la qualité des différentes imputations pour chacune des méthodes en fonctions 
+des différents pourcentage de valeurs manquantes.
+
+**N.B.** Nous utiliserons avant tout nipals du package ade4 pour récuperer les dataframes
+imputés (impossible via plsdepot)
+
+```{r  message=FALSE, warning=FALSE}
+library(ade4)
+```
+
+```{r}
+papillon_nipals_5 = ade4::nipals(papillon_NA_5, nf = 2, rec = TRUE)
+# the option rec is needed to obtain the reconstitution of imputed data
+# with NIPALS method
+papillon_nipals_15 = ade4::nipals(papillon_NA_15, nf = 2, rec = TRUE)
+papillon_nipals_20 = ade4::nipals(papillon_NA_20, nf = 2, rec = TRUE)
+papillon_nipals_25 = ade4::nipals(papillon_NA_25, nf = 2, rec = TRUE)
+papillon_nipals_30 = ade4::nipals(papillon_NA_30, nf = 2, rec = TRUE)
+```
+
+On décide de représenter les erreurs au sens des moindres carrés :
+
+```{r}
+imputation_error <- function(data, data_NA,imputed_data){
+  # compute rmse between original values and imputed values on a dataframe
+  bool = is.na(data_NA)
+  rmse = sqrt(sum((data[bool]-imputed_data[bool])^2))
+  return(rmse)
+}
+```
+
+
+```{r}
+# hold dataframe in list 
+NA_data = list(papillon_NA_5, papillon_NA_15, papillon_NA_20,
+            papillon_NA_25,papillon_NA_30)
+
+moy_data = list(papillon_moy_5, papillon_moy_15, papillon_moy_20,
+              papillon_moy_25,papillon_moy_30)
+
+missMDA_data = list(papillon_missMDA_5$completeObs, papillon_missMDA_15$completeObs,
+                    papillon_missMDA_20$completeObs,papillon_missMDA_25$completeObs,
+                    papillon_missMDA_30$completeObs)
+
+nipals_data = list(papillon_nipals_5$rec, papillon_nipals_15$rec, 
+                   papillon_nipals_20$rec, papillon_nipals_25$rec,
+                   papillon_nipals_30$rec)
+```
+
+Calculs des différentes erreurs :
+
+```{r}
+err.moy = c()
+err.missMDA = c()
+err.nipals = c()
+for (i in 1:5){
+  err.moy = c(err.moy, imputation_error(papillons,NA_data[[i]],moy_data[[i]]))
+  err.missMDA = append(err.missMDA,
+                       imputation_error(papillons,NA_data[[i]],missMDA_data[[i]]))
+  err.nipals = append(err.nipals,
+                      imputation_error(papillons,NA_data[[i]],nipals_data[[i]]))
+}
+
+```
+
+
+**N.B.** Pour 30% avec la méthode NIPALS lors de l'imputation la ligne 11 est remplie de NaN ce qui empeche de calculer l'erreur
+
+
+```{r}
+xdata = c(5,15,20,25,30)
+
+# plot the first curve by calling plot() function
+# First curve is plotted
+plot(xdata, err.moy, type="o", col="blue", pch="o",
+     lty=1, ylim=c(0,10), ylab="RMSE", xlab='Number of missing values (%)' )
+
+# Add second curve to the same plot by calling points() and lines()
+# Use symbol '*' for points.
+#lines(xdata, err.nipals, col="red",lty=2)
+
+# Add Third curve to the same plot by calling points() and lines()
+# Use symbol '+' for points.
+lines(xdata, err.missMDA, type="o", col="dark red", lty=2)
+
+# Adding a legend inside box at the location (2,40) in graph coordinates.
+# Note that the order of plots are maintained in the vectors of attributes.
+legend(10,8,legend=c("Mean","MissMDA"), col=c("blue","dark red"),
+                                   pch=c("o","o"),lty=c(1,2), ncol=1)
+title(main='Imputation error with mean and MissMDA methods')
+```
+```{r}
+plot(xdata[-5], err.nipals[-5], type="o", col="blue",
+     pch="o", lty=1, ylim=c(50,200), ylab="RMSE", xlab='Number of missing values (%)' )
+title(main='Imputation error with NIPALS method')
+```
+
+La robustesse de l'imputation peut alors être représenter celon le tableau suivant
+
+```{r}
+percentage_missingvalues <- c(5,15,20,25,30)
+err.papillon <- data.frame(percentage_missingvalues,err.moy,err.missMDA, err.nipals)
+err.papillon
+```
+
+# 2. Dataset: Paris 2005
+
+## (10)
+
+### 10 (1) Chargement du dataset et pré-traitement
+
+```{r}
+dat=read.table('Paris2005.txt')
+```
+Il est conseillé d'appliquer la transformation suivante sur notre jeu de données :
+en effet certaines méthodes d'imputations nécessite des jeux de données standardisées 
+
+
+```{r}
+dat=log(dat+1)
+```
+
+### 10 (2) Génération des tableaux avec données manquantes
+
+```{r}
+dat_NA_5  <- get_missing_values(dat,0.05) 
+dat_NA_15 <- get_missing_values(dat,0.15)
+dat_NA_20 <- get_missing_values(dat,0.20)
+dat_NA_25 <- get_missing_values(dat,0.25)
+dat_NA_30 <- get_missing_values(dat,0.30)
+```
+
+### 10 (3) Imputation par la moyenne
+
+```{r message=FALSE}
+dat_moy_5 =simple.impute.data.frame(dat_NA_5, fun=mean)
+dat_moy_15 =simple.impute.data.frame(dat_NA_15, fun=mean)
+dat_moy_20 =simple.impute.data.frame(dat_NA_20, fun=mean)
+dat_moy_25 =simple.impute.data.frame(dat_NA_25, fun=mean)
+dat_moy_30 =simple.impute.data.frame(dat_NA_30, fun=mean)
+```
+
+Les datasets ci dessus sont obtenus après imputation par la moyenne.
+
+### 10 (4) Application de l'ACP
+
+- Appliquer l'ACP sur le jeu de données Paris2005 après imputation par la moyenne
+
+```{r}
+pca = PCA(dat, graph=FALSE)
+```
+```{r}
+pca.compare.plot <- function(pca, pca.completed, titre){
+  
+  fig1 <- plot.PCA(pca, label='none', title='PCA of the original data')
+  fig2 <- plot.PCA(pca.completed, label='none', title = titre)
+  plot_grid(fig1, fig2, labels = "AUTO")
+  
+}
+```
+
+```{r  fig.width=13, fig.height=4}
+pca_dat_moy_5 = PCA(dat_moy_5, graph=FALSE)
+pca.compare.plot(pca,pca_dat_moy_5, 'PCA with imputed data (5% NA)')
+
+pca_dat_moy_15 = PCA(dat_moy_15, graph=FALSE)
+pca.compare.plot(pca,pca_dat_moy_15, 'PCA with imputed data (15% NA)')
+
+pca_dat_moy_20 = PCA(dat_moy_20, graph=FALSE)
+pca.compare.plot(pca,pca_dat_moy_20, 'PCA with imputed data (20% NA)')
+
+pca_dat_moy_25 = PCA(dat_moy_25, graph=FALSE)
+pca.compare.plot(pca,pca_dat_moy_25, 'PCA with imputed data (25% NA)')
+
+pca_dat_moy_30 = PCA(dat_moy_30, graph=FALSE)
+pca.compare.plot(pca,pca_dat_moy_30, 'PCA with imputed data (30% NA)')
+```
+
+### 10 (5) Utiliser MissMDA pour imputer les données manquantes.
+
+
+```{r}
+
+nb <- estim_ncpPCA(dat_NA_5, scale=TRUE)
+dat_missMDA_5 <- imputePCA(dat_NA_5, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(dat_NA_15, scale=TRUE)
+dat_missMDA_15 <- imputePCA(dat_NA_15, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(dat_NA_20, scale=TRUE)
+dat_missMDA_20 <- imputePCA(dat_NA_20, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(dat_NA_25, scale=TRUE)
+dat_missMDA_25 <- imputePCA(dat_NA_25, ncp=nb$ncp, scale = TRUE)
+
+nb <- estim_ncpPCA(dat_NA_30, scale=TRUE)
+dat_missMDA_30 <- imputePCA(dat_NA_30, ncp=nb$ncp, scale = TRUE)
+
+```
+
+### 10 (6) Application de l'ACP
+
+On applique l'ACP sur le jeu de données Paris2005
+
+```{r}
+pca = PCA(dat, graph=FALSE)
+```
+
+```{r}
+pca.missMDA.compare.plot <- function(pca, pca.completed, titre){
+  
+  fig1 <- plot.PCA(pca, label='none', title='PCA of the original data')
+  fig2 <- plot.PCA(pca.completed, label='none', title = titre)
+  plot_grid(fig1, fig2, labels = "AUTO")
+  
+}
+```
+
+Comparons les ACP : 
+
+```{r  fig.width=13, fig.height=4}
+pca_dat_missMDA_5 <- PCA(dat_missMDA_5$completeObs, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_dat_missMDA_5, 'PCA with imputed data (5% NA)')
+
+pca_dat_missMDA_15 = PCA(dat_missMDA_15, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_dat_missMDA_15, 'PCA with imputed data (15% NA)')
+
+pca_dat_missMDA_20 = PCA(dat_missMDA_20, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_dat_missMDA_20, 'PCA with imputed data (20% NA)')
+
+pca_dat_missMDA_25 = PCA(dat_missMDA_25, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_dat_missMDA_25, 'PCA with imputed data (25% NA)')
+
+pca_dat_missMDA_30 = PCA(dat_missMDA_30, graph=FALSE)
+pca.missMDA.compare.plot(pca,pca_dat_missMDA_30, 'PCA with imputed data (30% NA)')
+```
+
+### 10 (7) Application de la méthode NIPALS
+
+Appliquons NIPALS à paris2005 :
+
+```{r}
+dat.nipals = plsdepot::nipals(dat,comps=2)
+```
+
+```{r}
+dat.nipals_5 = plsdepot::nipals(dat_NA_5,comps=2)
+dat.nipals_15 = plsdepot::nipals(dat_NA_15,comps=2)
+dat.nipals_20 = plsdepot::nipals(dat_NA_20,comps=2)
+dat.nipals_25 = plsdepot::nipals(dat_NA_25,comps=2)
+dat.nipals_30 = plsdepot::nipals(dat_NA_30,comps=2)
+```
+
+```{r}
+plot(dat.nipals, what="observations", main='PCA of the original data')
+plot(dat.nipals_5, what="observations", main='PCA of imputed data with NIPALS (5% NA)')
+plot(dat.nipals_15, what="observations", main='PCA of imputed data with NIPALS (15% NA)')
+plot(dat.nipals_20, what="observations", main='PCA of imputed data with NIPALS (20% NA)')
+plot(dat.nipals_25, what="observations", main='PCA of imputed data with NIPALS (25% NA)')
+plot(dat.nipals_30, what="observations", main='PCA of imputed data with NIPALS (30% NA)')
+```
+
+### 10.(8)-(9)
+
+Comparons la robustesse des différentes imputations pour chacune des méthodes en fonctions 
+des différents pourcentage de valeurs manquantes dans le tableau parris2005
+
+
+```{r}
+dat_nipals_5 = ade4::nipals(dat_NA_5, nf = 2, rec = TRUE)
+# the option rec is needed to obtain the reconstitution of imputed data
+# with NIPALS method
+dat_nipals_15 = ade4::nipals(dat_NA_15, nf = 2, rec = TRUE)
+dat_nipals_20 = ade4::nipals(dat_NA_20, nf = 2, rec = TRUE)
+dat_nipals_25 = ade4::nipals(dat_NA_25, nf = 2, rec = TRUE)
+dat_nipals_30 = ade4::nipals(dat_NA_30, nf = 2, rec = TRUE)
+```
+
+
+```{r}
+imputation_error <- function(data, data_NA,imputed_data){
+  # compute rmse between original values and imputed values on a dataframe
+  bool = is.na(data_NA)
+  rmse = sqrt(sum((data[bool]-imputed_data[bool])^2))
+  return(rmse)
+}
+```
+
+```{r}
+# hold dataframe in list 
+NA_data = list(dat_NA_5, dat_NA_15, dat_NA_20,
+            dat_NA_25,dat_NA_30)
+
+moy_data = list(dat_moy_5, dat_moy_15, dat_moy_20,
+              dat_moy_25,dat_moy_30)
+
+missMDA_data = list(dat_missMDA_5$completeObs, dat_missMDA_15$completeObs,
+                    dat_missMDA_20$completeObs,dat_missMDA_25$completeObs,
+                    dat_missMDA_30$completeObs)
+
+nipals_data = list(dat_nipals_5$rec, dat_nipals_15$rec, 
+                   dat_nipals_20$rec, dat_nipals_25$rec,
+                   dat_nipals_30$rec)
+```
+
+Calculs des différentes erreurs :
+
+```{r}
+err.moy = c()
+err.missMDA = c()
+err.nipals = c()
+for (i in 1:5){
+  err.moy = c(err.moy, imputation_error(dat,NA_data[[i]],moy_data[[i]]))
+  err.missMDA = append(err.missMDA,
+                       imputation_error(dat,NA_data[[i]],missMDA_data[[i]]))
+  err.nipals = append(err.nipals,
+                      imputation_error(dat,NA_data[[i]],nipals_data[[i]]))
+}
+```
+
+```{r}
+xdata = c(5,15,20,25,30)
+
+# plot the first curve by calling plot() function
+# First curve is plotted
+plot(xdata, err.moy, type="o", col="blue", pch="o",
+     lty=1, ylim=c(0,120), ylab="RMSE", xlab='Number of missing values (%)')
+
+# Add second curve to the same plot by calling points() and lines()
+# Use symbol '*' for points.
+#lines(xdata, err.nipals, col="red",lty=2)
+
+# Add Third curve to the same plot by calling points() and lines()
+# Use symbol '+' for points.
+lines(xdata, err.missMDA, type="o", col="dark red", lty=2)
+
+# Adding a legend inside box at the location (2,40) in graph coordinates.
+# Note that the order of plots are maintained in the vectors of attributes.
+legend(5,150,legend=c("Mean","MissMDA"), col=c("blue","dark red"),
+                                   pch=c("o","o"),lty=c(1,2), ncol=1)
+title(main='Imputation error with mean and MissMDA methods')
+```
+```{r}
+plot(xdata[-5], err.nipals[-5], type="o", col="blue",
+     pch="o", lty=1, ylim=c(100,300), ylab="RMSE", xlab='Number of missing values (%)' )
+title(main='Imputation error with NIPALS method')
+```
+```{r}
+percentage_missingvalues <- c(5,15,20,25,30)
+err.dat <- data.frame(percentage_missingvalues,err.moy,err.missMDA, err.nipals)
+err.dat
+```
+Pour ce jeu de données la PCA itérative nous offre les meilleurs résultats en termes de
+qualité d'imputation et de robustesse.
+
+
+### (11)
+
+```{r message=FALSE, warning=FALSE}
+library(ClustImpute)
+```
+
+Jeu de données : **papillons**
+
+```{r}
+papillon_clustimpute_5 <- ClustImpute(papillon_NA_5,nr_cluster=3)  # selon l'ACP il y a 3 espèces de papillons
+papillon_clustimpute_15 <- ClustImpute(papillon_NA_15,nr_cluster=3)
+papillon_clustimpute_20 <- ClustImpute(papillon_NA_20,nr_cluster=3)
+papillon_clustimpute_25 <- ClustImpute(papillon_NA_25,nr_cluster=3)
+papillon_clustimpute_30 <- ClustImpute(papillon_NA_30,nr_cluster=3)
+```
+
+```{r}
+NA_data = list(papillon_NA_5, papillon_NA_15, papillon_NA_20,
+            papillon_NA_25,papillon_NA_30)
+
+clustimpute_data = list(papillon_clustimpute_5$complete_data, papillon_clustimpute_15$complete_data, 
+                        papillon_clustimpute_20$complete_data, papillon_clustimpute_25$complete_data,
+                        papillon_clustimpute_30$complete_data)
+
+err.clustimpute = c()
+for (i in 1:5){
+  err.clustimpute = c(err.moy, imputation_error(papillons,NA_data[[i]],clustimpute_data[[i]]))
+}
+```
+
+```{r}
+err.clustimpute 
+```
+Jeu de données : **paris2005**
+
+```{r}
+dat_clustimpute_5 <- ClustImpute(dat_NA_5,nr_cluster=3)  
+dat_clustimpute_15 <- ClustImpute(dat_NA_15,nr_cluster=3)
+dat_clustimpute_20 <- ClustImpute(dat_NA_20,nr_cluster=3)
+dat_clustimpute_25 <- ClustImpute(dat_NA_25,nr_cluster=3)
+dat_clustimpute_30 <- ClustImpute(dat_NA_30,nr_cluster=3)
+```
+
+```{r}
+NA_data = list(dat_NA_5, dat_NA_15, dat_NA_20,
+            dat_NA_25,dat_NA_30)
+
+clustimpute_data = list(dat_clustimpute_5$complete_data, dat_clustimpute_15$complete_data, 
+                        dat_clustimpute_20$complete_data, dat_clustimpute_25$complete_data,
+                        dat_clustimpute_30$complete_data)
+
+err.clustimpute = c()
+for (i in 1:5){
+  err.clustimpute = c(err.moy, imputation_error(dat,NA_data[[i]],clustimpute_data[[i]]))
+}
+```
+
+```{r}
+err.clustimpute 
+```
+
+
+# Annexe 
+
+Nous souhaitons comparer les résultats après imputation sur le dataset paris2005, pour cela nous allons créer des données manquantes avec un *ratio = 0.5*.
+
+**création des données manquantes**
+
+```{r}
+ratio = 0.05
+# Indices de l’échantillon test
+IND=which(!is.na(dat),arr.ind=TRUE)
+ntest=ceiling(dim(dat)[1]*ratio)
+ind.test=IND[sample(1:dim(IND)[1],ntest),]
+# Création des données manquantes
+dat.test=dat[ind.test]
+dat.train=dat
+dat.train[ind.test]=NA
+```
+
+**imputation**
+
+- Par la moyenne:
+```{r}
+dat.moy=impute(dat.train, fun=mean)
+err.moy=abs(dat.test-as.matrix(dat.moy)[ind.test])
+
+```
+
+- Par la médiane
+```{r}
+med=apply(dat.train,1,median,na.rm=TRUE)
+dat.med=dat.train
+ind.na=which(is.na(dat.med),arr.ind=TRUE)
+dat.med[ind.na]=med[ind.na[,1]]
+err.med=abs(dat.test-dat.med[ind.test])
+```
+
+- KNN
+```{r message=FALSE, warning=FALSE}
+library(VIM)
+```
+
+```{r }
+dat.kNN=kNN(dat.train, k=5, imp_var=FALSE)
+err.kNN=abs(dat.test-dat.kNN[ind.test])
+```
+
+- AmeliaII
+
+```{r message=FALSE,warning = FALSE}
+library(Amelia)
+```
+
+```{r}
+dat.amelia=amelia(dat.train,m=1)$imputations$imp1
+err.amelia=abs(dat.test-dat.amelia[ind.test])
+```
+
+- missForest
+
+```{r message=FALSE, warning = FALSE}
+library(missForest)
+```
+
+```{r}
+dat.missForest<-missForest(dat.train,maxiter=2, ntree = 200, variablewise = TRUE)$ximp
+err.missForest=abs(dat.test-dat.missForest[ind.test])
+
+```
+
+**comparaison des méthodes ci dessus:**
+
+```{r}
+# Erreurs de complétion sur l’échantillon test
+boxplot(data.frame(err.moy, err.med, err.kNN, err.missForest,err.amelia),ylim=c(0,1.4))
+
+```
+un commentaire pour décrire cette comparaison 
