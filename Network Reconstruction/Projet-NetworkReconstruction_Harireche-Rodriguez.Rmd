@@ -1,0 +1,470 @@
+---
+title: "Mini-Projet : Network Reconstruction"
+output:
+  html_document:
+    df_print: paged
+---
+
+                             Lilia HARIRECHE _ Antoine RODRIGUEZ - M2 MLDS FA
+
+------------------------------------
+
+
+```{r eval=FALSE, include=FALSE}
+setwd('C:/Users/rodri/Documents/M2MLSD/NetworkReconstruction/Projet')
+```
+
+Les cancers du sein sont classés selon les sous-types d'expression génique suivants: 
+luminal A, luminal B, Her2-enriched (aussi connu sous le nom ERBB2), et basal-like. 
+
+Les sous types Luminal sont associés à l'expression des récepteurs des œstrogènes et de la progestérone et des marqueurs de cellules épithéliales luminales différenciées.
+(*Sequence analysis of mutations and translocations across breast cancer subtypes (Nature 2012, Banerji et al.)*)
+
+Ces sous-types diffèrent par leur complexité génomique, leurs principales altérations génétiques et le pronostic clinique.
+
+L'objectif de ce projet est d'analyser les mutations géniques des quatre types des cancers du sein à partir du tableau de données **breast_cancer** que l'on va construire à l'aide du jeu de données *Breast Invasive Carcinoma (TCGA, PanCancer Atlas)* disponible sur cBioPortal à l'adresse :
+
+https://www.cbioportal.org/study/summary?id=brca_tcga_pan_can_atlas_2018
+
+Nous utiliserons trois approches : l'approche **hill-climbing** (search & score), **MIIC** et **Aracne**.
+
+# Préparation des données
+
+## Chargement des données
+La première étape est de récupérer les tableaux de données dont nous aurons besoin 
+pour construire les graphes désirés.
+
+Nous aurons besoin d'abord besoin des données cliniques des échantillons tumoraux 
+et le sous-type de cancer du sein (LuminalA, LuminalB, HER2, basal-like) :
+
+```{r eval=FALSE}
+# Informations patients notamment le sous types de cancer
+data_clinical_patient <- read.table('brca_tcga_pan_can_atlas_2018/data_clinical_patient.txt',
+                                    header=TRUE, sep= '\t')
+# Informations patients sur les échantillons de cellules tumorales
+data_clinical_sample <- read.table('brca_tcga_pan_can_atlas_2018/data_clinical_sample.txt',
+                                   header=TRUE, sep= '\t')
+```
+
+Nous souhaitons aussi les informations de l'expression des gènes, cette dernière 
+est bien souvent exprimés par son taux d'ARN messager (ARNm). 
+(http://www.chups.jussieu.fr/polys/biochimie/BGbioch/POLY.Chp.9.25.html)
+
+Plusieurs tableaux sont disponibles et mesure ce taux (https://docs.cbioportal.org/5.1-data-loading/data-loading/file-formats#expression-data),
+on choisit d'utiliser celui exprimant les Z-scores par rapport à la moyenne des expressions 
+normales des gènes :
+
+```{r eval=FALSE}
+# zscores regulation ARNm expliciter le choix
+data_RNA_Seq_v2_mRNA_median_all_sample_ref_normal_Zscores <- read.table('brca_tcga_pan_can_atlas_2018/data_RNA_Seq_v2_mRNA_median_all_sample_ref_normal_Zscores.txt',header=TRUE, sep= '\t')
+```
+
+En effet, une valeur positive (resp. négative) exprimera une sur-expression (resp. sous_expression).
+
+Le tableau des mutations suivant contient l'information de chacune des mutations 
+identifié sur chaque échantillon tumoral : 
+
+```{r}
+# gene mutations compte 
+data_mutations_extended <- read.table('brca_tcga_pan_can_atlas_2018/data_mutations_extended.txt',header=TRUE, sep= '\t')
+```
+
+Ce tableau nous permettra d'identifier les gènes qui subissent le plus de mutations.
+
+## Pré-traitement et création de notre tableau principal
+
+Tout d'abord retirons le superflu et ne gardons que : 
+ - `SAMPLE_ID` : les identifiants des échantillons tumoraux
+ - `PATIENT_ID`  et `SUBTYPE` de `data_clinical_sample` pour pouvoir reconstruire des graphes suivant le sous types de cancers
+ -  les niveaux d'expressions des gènes des 20 gènes mutants les plus présents dans chaque échantillons
+ 
+```{r eval=FALSE}
+data_clinical_sample <- data_clinical_sample[,1:2]
+patients <- data_clinical_patient[c('PATIENT_ID',"SUBTYPE")]
+mRNA <- data_RNA_Seq_v2_mRNA_median_all_sample_ref_normal_Zscores[-2]
+```
+
+```{r}
+mutations <- data_mutations_extended[c("Hugo_Symbol","Tumor_Sample_Barcode","t_ref_count","t_alt_count")]
+```
+
+
+```{r eval=FALSE}
+patients[patients['SUBTYPE'] == '','SUBTYPE'] = NA 
+# sum(is.na(mutations))  ## le tableau ne contient pas de NA
+mRNA <- mRNA[mRNA['Hugo_Symbol'] != '',]  # supprime les lignes de gènes sans noms
+```
+
+Cherchons maintenant à déterminer les 20 gènes mutants les plus représentés :
+
+```{r}
+genes = tapply(mutations$Tumor_Sample_Barcode, 
+               mutations$Hugo_Symbol,
+               FUN = function(x) length(unique(x)))
+length(genes) # nombre de gènes uniques
+```
+
+```{r message=FALSE, warning=FALSE}
+library(viridis) # palette de couleurs
+```
+
+```{r}
+par(mar=c(5,4,4,2))
+barplot(sort(genes,decreasing=TRUE)[1:21], 
+        col=viridis(21,option ="E"),
+        xlab="Genes", 
+        ylab="Nombre de mutations", 
+        main="Mutations par genes \n (les 21 plus fréquents) ", 
+        ylim=c(0,200),
+        las=2,
+        cex.names=0.75
+        )
+```
+```{r}
+genes_sorted = sort(genes,decreasing=TRUE)[1:21]
+genes_sorted #print
+```
+Les gènes tels que TP53, PIK3CA, GATA3, MAP3K1 et RUNX1 ont été précédemment identifiés comme 
+très fortement impliqués dans les cancers du sein.
+(*Comprehensive molecular portraits of human breast tumours (Nature 2012, Koboldt et al.)*)
+
+**N.B. :** On garde les 21 gènes les plus représentés car nous n'avons aucune autre
+information pour KMT2C dans le tableau mutations (et donc dans les tableaux `mRNA` et `mutations`)
+
+On filtre donc les deux tableaux selon ces gènes : 
+```{r eval=FALSE}
+genes = names(genes_sorted) # 21
+mRNA_filtered <- mRNA[mRNA$Hugo_Symbol %in% genes,]
+mutations_filtered <- mutations[mutations$Hugo_Symbol %in% genes,]
+```
+
+```{r message=FALSE, warning=FALSE}
+library(stringr)  # for strings operations
+```
+
+```{r eval=FALSE}
+col = str_replace_all(colnames(mRNA_filtered), "[.]", "-") # renommer les SAMPLE_ID
+colnames(mRNA_filtered) <- col
+```
+
+On commence donc à construire notre tableau principal contenant les 20 gènes, `SAMPLE_ID`
+et le sous type de cancer correspondant (tout cela à l'aide de requêtes merge entre
+les trois tableau précédents)
+
+```{r eval=FALSE}
+tab <- data.frame(t(mRNA_filtered))
+colnames(tab) <- tab['Hugo_Symbol',]
+tab <- tab[-1,]
+```
+
+```{r eval=FALSE}
+sample_subtype <- merge(data_clinical_sample,patients,by.y='PATIENT_ID')
+```
+
+```{r eval=FALSE}
+tab <- cbind('SAMPLE_ID'=rownames(tab),tab)
+rownames(tab) <- NULL
+tab <- merge(sample_subtype[,c('SAMPLE_ID','SUBTYPE')],tab,by.y='SAMPLE_ID')
+```
+
+```{r eval=FALSE}
+write.csv(tab,"breast.csv", row.names=FALSE)  # enregistrement pour exécution du notebook plus rapide
+```
+
+# Construction des graphes et interprétations
+
+Voici tout d'abord le tableau sur lequel nous allons travailler :
+
+```{r}
+breast_cancer <- read.csv("breast.csv")
+head(breast_cancer)
+```
+
+Nous chercherons à établir les graphes pour chacuns des sous-types : 
+
+  - `BRCA_LumA` : luminal A
+  - `BRCA_LumB` : luminal B
+  - `BRCA_Her2` : HER2
+  - `BRCA_Basal` : basal-like
+
+en plus d'un graphe établit sur tout les échantillons.
+
+```{r}
+distrib_subtypes = tapply(breast_cancer$SAMPLE_ID,
+                          breast_cancer$SUBTYPE,
+                          FUN = function(x) length(unique(x)))
+```
+```{r}
+par(mar=c(5,4,4,2))
+barplot(distrib_subtypes, 
+        col=viridis(5, option ="E"),
+        xlab="Sous-types", 
+        ylab="Nombre d'échantillons", 
+        main="Répartition du nombre d'échantillons tumoraux de chaque type", 
+        ylim=c(0,500),
+        las=1,
+        cex.names=0.8
+        )
+```
+
+Construisons les graphes selon différentes approches et selon les différents sous-types de cancers du sein.
+
+On établit d'abord quelques paramètres pour l'affichage de nos graphes : 
+
+```{r}
+# palette de couleur pour 20 sommets de graphes 
+df_col <- data.frame(genes_sorted)
+df_col <- cbind('GENE_ID'=rownames(df_col),df_col)
+df_col <- df_col[df_col['GENE_ID']!='KMT2C',]
+df_col$ver_col <- viridis(20,option ="E")
+```
+
+<!-- https://stackoverflow.com/questions/23209802/placing-vertex-label-outside-a-circular-layout-in-igraph -->
+
+```{r message=FALSE, warning=FALSE}
+# chargement des librairies
+library(bnlearn)
+library(igraph)
+```
+
+## Search & Score (Hill Climbing)
+
+On souhaite représenter les graphes pour chacuns des sous types, nous le comparerons directement avec le graphe construit à partir de toute les données. 
+
+```{r}
+net_hc <- bnlearn::hc(breast_cancer[,-c(1,2)])
+mat_hc <- bnlearn::amat(net_hc)
+graph_hc <- graph_from_adjacency_matrix(mat_hc,
+                                        diag = FALSE, 
+                                        weight = TRUE, 
+                                        mode = "directed")
+E(graph_hc)$type = 1 # type 1 : tout le dataset
+
+hc_net_construct <- function(subtype){
+  # creation du graphe du sous-type subtype
+  net_hc <- bnlearn::hc(subset(breast_cancer,
+                             SUBTYPE==subtype)[,-c(1,2)])
+  mat_hc <- bnlearn::amat(net_hc)
+  graph <- graph_from_adjacency_matrix(mat_hc,
+                                       diag = FALSE,
+                                       weight = TRUE, 
+                                       mode = "directed")
+  E(graph)$type = 2 # type 2 : sous-type
+  g = graph.union(graph_hc, graph, byname="auto")
+  E(g)$type_1[is.na(E(g)$type_1)] <- 0 
+  E(g)$type_2[is.na(E(g)$type_2)] <- 0
+  E(g)$type <- E(g)$type_1 + E(g)$type_2
+  # 1 = type 1, 2 = type 2, 3 = type 1 et 2
+  return(g)
+}
+
+edg_col <- function(g){
+  # code couleur pour les edges 
+  # black : tout les types, red : sous-types, purple : apparition dans les deux
+  dic=c(1,2,3)
+  names(dic) = c('#DADADA','red','#F45B5B')
+  return(names(dic[E(g)$type])) 
+}
+
+g1 = hc_net_construct('BRCA_LumA')
+g2 = hc_net_construct('BRCA_LumB')
+g3 = hc_net_construct('BRCA_Her2')
+g4 = hc_net_construct('BRCA_Basal')
+```
+
+```{r , fig.width = 8, fig.height = 8}
+plot_graph <- function(g, titre){
+  # affichage de graphes construits avec les méthodes
+  # hill climbing , aracne et miic
+  layout <- layout_in_circle(g, order=names(genes_sorted)[-7])
+  par(mar=c(2,2,2,2), oma=c(1,0,0,0)) #marges
+
+  plot(g,
+       layout = layout,
+       
+       edge.width = 0.1,
+       edge.arrow.size = 1,
+       edge.color = edg_col(g), 
+       edge.lty = ifelse(E(g)$type==1, 4, 1),
+       
+       vertex.size = 10,
+       vertex.label.dist = 1.5,
+       vertex.label.font = 2,
+       vertex.label.cex = 1,
+       vertex.label.color = "black",
+       vertex.color = df_col[V(g)$name, 'ver_col'],
+       vertex.frame.color = "black",
+       
+       main = titre)
+}
+
+plot_graph(g1, 'Méthode Hill Climbing sur le sous type Luminal A')
+plot_graph(g2, 'Méthode Hill Climbing sur le sous type Luminal B')
+plot_graph(g3, 'Méthode Hill Climbing sur le sous type Her2')
+plot_graph(g4, 'Méthode Hill Climbing sur le sous type Basal')
+```
+
+Quelques précisions à propos des graphes représentés :
+
+  - La couleur des sommets représente le nombre de mutations par gènes (clair : 
+  moins de mutations, foncé : plus de mutations)
+  - Les arêtes en gris clair représentent les arêtes du graphe (*) construit à partir 
+  de tout `breast_cancer` indépendamment du sous type
+  - Les arêtes rouges présentent la construction de graphe résteinte à un sous 
+  type de cancer
+  
+**N.B. :** Les arêtes rouges légèrement plus claires sont celles partagées avec ce graphe (*)
+
+<!-- # fonction pour affichage des noms des sommets circulaire -->
+<!-- radian.rescale <- function(x, start=0, direction=1) { -->
+<!--   c.rotate <- function(x) (x + start) %% (2 * pi) * direction -->
+<!--   c.rotate(scales::rescale(x, c(0, 2 * pi), range(x))) -->
+<!-- } -->
+<!-- lab.locs <- radian.rescale(x=1:20, direction=-1, start=0) # emplacement labels sommets -->
+
+<!-- dans le plot -->
+<!-- vertex.label.degree = radian.rescale(x=1:20, direction=-1, start=0), -->
+
+La méthode search & score (ici hill climbing) a tendance à "faire plus de lien" entre les sommets.
+Il est ici compliqué d'identifier des chemins de mutations entre les gènes.
+
+On remarque néanmoins que le gène TP53 semble moins régulé par les autres gènes.
+
+## Méthode ARACNE
+
+On peux construire les graphes comme la méthode précédente : 
+
+```{r}
+net_ar <- bnlearn::aracne(breast_cancer[,-c(1,2)])
+mat_ar <- bnlearn::amat(net_ar)
+graph_ar <- graph_from_adjacency_matrix(mat_ar,
+                                        diag = FALSE, 
+                                        weight = TRUE, 
+                                        mode = "directed")
+E(graph_ar)$type = 1 # type 1 : tout le dataset
+
+ar_net_construct <- function(subtype){
+  # creation du graphe du sous-type subtype
+  net_ar <- bnlearn::aracne(subset(breast_cancer,
+                             SUBTYPE==subtype)[,-c(1,2)])
+  mat_ar <- bnlearn::amat(net_ar)
+  graph <- graph_from_adjacency_matrix(mat_ar,
+                                       diag = FALSE,
+                                       weight = TRUE, 
+                                       mode = "directed")
+  E(graph)$type = 2 # type 2 : sous-type
+  g = graph.union(graph_ar, graph, byname="auto")
+  E(g)$type_1[is.na(E(g)$type_1)] <- 0 
+  E(g)$type_2[is.na(E(g)$type_2)] <- 0
+  E(g)$type <- E(g)$type_1 + E(g)$type_2
+  # 1 = type 1, 2 = type 2, 3 = type 1 et 2
+  return(g)
+}
+
+edg_col <- function(g){
+  # code couleur pour les edges 
+  # black : tout les types, red : sous-types, purple : apparition dans les deux
+  dic=c(1,2,3)
+  names(dic) = c('#DADADA','red','#F45B5B')
+  return(names(dic[E(g)$type])) 
+}
+
+g1 = ar_net_construct('BRCA_LumA')
+g2 = ar_net_construct('BRCA_LumB')
+g3 = ar_net_construct('BRCA_Her2')
+g4 = ar_net_construct('BRCA_Basal')
+```
+
+
+```{r , fig.width = 8, fig.height = 8}
+plot_graph(g1, 'Méthode ARACNE sur le sous type Luminal A')
+plot_graph(g2, 'Méthode ARACNE sur le sous type Luminal B')
+plot_graph(g3, 'Méthode ARACNE sur le sous type Her2')
+plot_graph(g4, 'Méthode ARACNE sur le sous type Basal')
+```
+
+Dans les cancers de type Luminal HMCN1 semble jouer un rôle important dans la régulation de 
+nombreux gènes notamment dans LUminal B. 
+
+Dans une moindre mesure le gène SYNE1 aussi.
+
+On remarque aussi que les gènes avec plus de mutations possèdent plus de liens (entrants ou sortant).
+
+## Methode MIIC
+
+```{r eval=FALSE}
+miic.res <- miic(input_data = breast_cancer[,-c(1,2)],
+                 latent = "yes",
+                 n_shuffles = 10,
+                 conf_threshold = 0.009)
+graph_miic <- miic::miic.export(miic.res, method = "igraph")
+
+E(graph_miic)$type = int(1) # type 1 : tout le dataset
+
+miic_net_construct <- function(subtype){
+  # creation du graphe du sous-type subtype
+  miic.res <- miic(subset(breast_cancer,
+                          SUBTYPE==subtype)[,-c(1,2)],
+                   latent = "yes",
+                   n_shuffles = 10,
+                   conf_threshold = 0.009)
+  graph <- miic::miic.export(miic.res, method = "igraph")
+  E(graph)$type = 2 # type 2 : sous-type
+  g = graph.union(graph_miic, graph, byname="auto")
+  E(g)$type_1[is.na(E(g)$type_1)] <- 0 
+  E(g)$type_2[is.na(E(g)$type_2)] <- 0
+  E(g)$type <- strtoi(E(g)$type_1) + strtoi(E(g)$type_2)
+  # 1 = type 1, 2 = type 2, 3 = type 1 et 2
+  return(g)
+}
+
+g1 = miic_net_construct('BRCA_LumA')
+g2 = miic_net_construct('BRCA_LumB')
+g3 = miic_net_construct('BRCA_Her2')
+g4 = miic_net_construct('BRCA_Basal')
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(g1,"miic1")
+saveRDS(g2,"miic2")
+saveRDS(g3,"miic3")
+saveRDS(g4,"miic4")
+```
+```{r include=FALSE}
+g1<-readRDS("miic1")
+g2<-readRDS("miic2")
+g3<-readRDS("miic3")
+g4<-readRDS("miic4")
+```
+
+```{r , fig.width = 8, fig.height = 8}
+plot_graph(g1, 'Méthode MIIC sur le sous type Luminal A')
+plot_graph(g2, 'Méthode MIIC sur le sous type Luminal B')
+plot_graph(g3, 'Méthode MIIC sur le sous type Her2')
+plot_graph(g4, 'Méthode MIIC sur le sous type Basal')
+```
+
+Les commentaires établit à propos de HMCN1 et SYNE1 dans la méthode précédente cse confirme ici.
+
+On remarque aussi une importance du gène ZFHX4 dans les cancers de sous-types HER2 et basal-like.
+
+## Discussion 
+
+Les articles Kobolt et Benarji ne font pas état des gènes HMCN1, SYNE1, or on remarque ici 
+que leur régulation pourrait jouer un rôle dans les cancers de type Luminal.
+
+De plus, retrospectivement, la mise en avant du gène ZFHX4 dans la méthode MIIC 
+peut aussi être aperçu via la méthode ARACNE.
+
+On remarque que le niveau de relation entre le gène **TP53** et les autres gènes est souvent plus faible,
+dans les articles il est indiqué que celui-ci est fortement cimpliqué dans les cancers du sein, 
+*"on pourrait imaginer qu'il se suffit à lui même et n'entre pas dans des chemins de mutations."*
+
+Ce genre d'étude nous montre d'un point de vue biologique comment les gènes sont 
+impliqués dans la formation des cellules cancéreuses et leurs niveaux d'expression selon le type de cancer.
+
+Ces réseaux cherchent à représenter des chemins de mutations entre les gènes et 
+pourraient nous aider à déterminer d'éventuelles régulations entre ceux-ci.
+Supprimer ces liens pourrait éventuellement permettre de réguler la formation 
+de cellules cancéreuses et donc le taux de cancer de sein.
+
