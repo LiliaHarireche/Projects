@@ -1,0 +1,8 @@
+numpy
+spacy==3.0.3
+#boto3
+#google-cloud-translate
+#google
+pymorphy2
+pymorphy2-dicts-uk
+pandas
