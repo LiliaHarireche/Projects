@@ -1,0 +1,708 @@
+---
+title: "Projet analyse de séries chronologiques"
+output:
+  html_document: default
+---
+
+
+
+                                               Lilia HARIRECHE
+                                                   MLDS-FA
+
+
+
+
+
+L'objectif de ce projet d'analyse de séries chronologiques est d'apprendre à: tracer, examiner et préparer des séries pour la modélisation et la prévision via un processus d'évaluation et d'itération. 
+Pour cela, nous avons utilisé un ensemble de données contenant le nombre horaire et quotidien de vélos de location entre les années 2011 et 2012 dans le système de partage de vélos Capital à Washington avec les informations météorologiques et saisonnières correspondantes.
+
+Dans ce projet, nous allons se baser sur 3 parties principales: **la description du jeu de données**, **la notion de smoothing**, et **le forcasting avec ARIMA models**.
+
+
+
+# **1. Description du jeu de données**
+
+## **Librairies**
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(lubridate)
+library(tseries)
+library(forecast)
+library(TTR)
+```
+
+## **Chargement des données**
+
+```{r }
+day <- read.csv("day.csv",stringsAsFactors=TRUE)
+dim(day)
+head(day)
+```
+
+## **1.1. How do the temperatures change across the seasons? What are the mean and median temperatures?**
+
+Nous allons d'abord convertir la température et créer la colonne *raw.temp*, car les données de température étaient divisées en 41.
+Ainsi selon l'UCI nous avons : *1:winter, 2:spring, 3:summer, 4:fall*
+
+```{r }
+# Converting the nomalized temperature
+day$raw.temp <- (day$temp*41)
+head(day)
+dim(day)
+```
+```{r}
+day.temp <- ts(day$raw.temp)
+plot(day.temp, main = "Temperature across the 2 years", ylab="Temperature in Celsius", col="blue", xlab="Time by day")
+```
+
+- Pour plus de détail sur comment les températures changent durant toutes les saisons, nous allons calculer la moyenne, la médiane et l'écart type de toutes les saisons, puis faire des visualisations graphiques que nous pourrions interpréter.
+
+```{r}
+#Calculating Median, Mean and Standard deviation of winter.
+winter <- subset(day, season == 1)$raw.temp
+wi.mean <- mean(winter)
+wi.median <- median(winter)
+wi.sd <- sd(winter)
+
+#Calculating Median, Mean and Standard deviation of spring.
+spring <- subset(day, season == 2)$raw.temp
+sp.mean <- mean(spring) 
+sp.median <- median(spring) 
+sp.sd <- sd(spring)
+
+#Calculating Median, Mean and Standard deviation of summer.
+summer <- subset(day, season == 3)$raw.temp
+su.mean <- mean(summer) 
+su.median <- median(summer) 
+su.sd <- sd(summer)
+
+#Calculating Median, Mean and Standard deviation of fall.
+fall <- subset(day, season == 4)$raw.temp
+fa.mean <- mean(fall)
+fa.median <-median(fall)
+fa.sd <- sd(fall)
+```
+
+Comme nous pouvons le voir dans l'analyse ci dessus, la température est relativement élevée en toutes saisons, nous avons ainsi obtenu les résultats suivants:
+
+Winter:
+  La température moyenne en hiver est: 12.21.
+  La température mediane en hiver est: 11.72.
+  La derivation standard de la température en hiver est: 4.21.
+Spring:
+  La température moyenne en printemps est: 22.32.
+  La température mediane en printemps est: 23.05.
+  La derivation standard de la température en printemps est: 5.03.
+Summer:
+  La température moyenne en été est: 28.96.
+  La température mediane en été est: 29.3.
+  La derivation standard de la température en été est: 2.9.
+Fall:
+  La température moyenne en automne est: 17.34.
+  La température mediane en automne est: 16.78.
+  La derivation standard de la température en automne est: 4.42.
+  
+### *- Afin de visualiser les résultats obtenus précedemment, nous allons créer un histogramme affichant les températures de chaque saison, y compris des lignes pour les températures moyennes et médianes.*
+
+```{r}
+boxplot(subset(day, season == 1)$temp, subset(day, season == 2)$temp, subset(day, season == 3)$temp, subset(day, season == 4)$temp, col = c("green", "red", "orange", "blue"), xlab = "Spring - Summer - Fall - Winter", ylab = "Temperature")
+```
+
+Nous pouvons aussi visualiser les résultats comme ci dessous: 
+
+```{r }
+#create a histogram for the distribution of temperatures in winter. 
+hist(x = winter, 
+     main = "Temperatures in Winter", 
+     xlab = "Temperature in Celcius", 
+     ylab = "Number of Days", 
+    xlim = c(0, 30), ylim = c(0, 40)
+    )
+
+abline(v = wi.mean, lwd = 2, lty = 1, col = "red")  
+text(x = 23, y = 40, 
+     labels = paste("Mean = ", round(mean(winter),2), sep = ""), col = "red" )
+
+abline(v = wi.median, lwd = 2, lty = 3, col ="blue") 
+text(x = 10, y = 40, 
+     labels = paste("Median = ", round(median(winter),2), sep = ""), col ="blue" )
+     
+```
+```{r}
+#create histogram for the distribution of temperatures in spring.
+hist(x = spring, 
+     main = "Temperatures in Spring", 
+     xlab = "Temperature in Celcius", 
+     ylab = "Number of Days",
+     xlim = c(0, 25),
+     ylim = c(0, 45))
+
+abline(v = sp.mean, lwd = 2, lty = 1, col = "red")  
+text(x = 17, y = 35, 
+     labels = paste("Mean = ", round(mean(spring),2), sep = ""), col="red" )
+
+abline(v = sp.median, lwd = 2, lty = 3, col = "blue") 
+text(x = 6, y = 35, 
+     labels = paste("Median = ", round(median(spring),2), sep = ""), col="blue" )
+```
+
+```{r}
+#create a histogram for the distribution of temperatures in summer.
+hist(x = summer, 
+     main = "Temperatures in Summer", 
+     xlab = "Temperature in Celcius", 
+     ylab = "Number of Days", 
+      xlim = c(0, 35), ylim = c(0, 40)
+    )
+abline(v = su.mean, lwd = 2, lty = 1, col = "red") 
+text( x = 15, y = 40, 
+     labels = paste("Mean = ", round(mean(summer),2), sep = ""),
+col = "red")
+
+abline(v = su.median, lwd = 2, lty = 3, col = "blue") 
+text(x = 31, y = 40, 
+     labels = paste("Median = ", round(median(summer),2), sep = ""), col = "blue" )
+```
+
+```{r}
+#create a histogram for the distribution of temperatures in fall. 
+hist(x = fall, 
+     main = "Temperatures in Fall", 
+     xlab = "Temperature in Celcius", 
+     ylab = "Number of Days", 
+      xlim = c(15, 40), ylim = c(0, 70)
+    )
+abline(v = fa.mean, lwd = 2, lty = 1, col = "red") 
+text(x = 24, y = 60, 
+     labels = paste("Mean = ", round(mean(fall),3), sep = ""), col = "red" )
+
+abline(v = fa.median, lwd = 2, lty = 3, col ="blue") 
+text(x = 35, y = 60, 
+     labels = paste("Median = ", round(median(fall),3), sep = ""), col ="blue" )
+```
+
+
+## **1.2. Is there a correlation between the temp/atemp/mean.temp.atemp and the total count of bike rentals?**
+
+
+Dans cette partie nous allons d'abord vérifier l'ensemble de données NA ou NULL. Ensuite, vu que le jeu de données a déjà été recodé et corrigé, nous allons créer deux nouvelles colonnes *raw.atemp* et *raw.mean.temp.atemp*, et la fin nous allons faire un test de corrélation.
+
+
+```{r message=FALSE}
+#is.na(day)
+#is.null(day)
+```
+
+### **- Création des nouvelles colonnes**
+
+```{r}
+#For this question we converted "atemp" because it was devided of 50.
+day$raw.atemp <-(day$atemp * 50)
+
+#Create a new column of the mean of raw.temp and raw.atemp.
+day$raw.mean.temp.atemp <- (day$raw.temp + day$raw.atemp)/2
+head(day)
+
+```
+
+### **- test de corrélation**
+
+```{r}
+#Correlation between temp and the total count of bike rentals.
+cor.temp <- cor.test(x = day$raw.temp, y = day$cnt)
+cor.temp
+```
+```{r}
+#Nous avons récuperer ces données qui seront utilisées dans le plot des corrélations
+Temperature <- day$raw.temp
+Amount.Rentals <- day$cnt
+```
+
+La corrélation est de 0.63.
+
+```{r}
+#Correlation between atemp and the total count of bike rentals.
+cor.atemp <- cor.test(x = day$raw.atemp, y = day$cnt)
+cor.atemp
+```
+
+
+```{r}
+#Nous avons récuperer ces données qui seront utilisées dans le plot des corrélations
+Feeled.Temperature <- day$raw.atemp
+Amount.Rentals <- day$cnt
+```
+
+La corrélation est de 0.63.
+
+```{r}
+#Correlation between mean.temp.atemp and the total count of bike rentals.
+day$raw.mean.temp.atemp <-(day$raw.temp + day$raw.atemp)/2
+cor.mean.temp.atemp <- cor.test(x = day$raw.mean.temp.atemp,
+y = day$cnt)
+cor.mean.temp.atemp
+```
+
+
+```{r}
+Feeled.Raw.Temperature <- day$raw.mean.temp.atemp
+Amount.Rentals <- day$cnt
+```
+
+La corrélation est de 0.63.
+
+### **- Afin de visualiser les corrélations obtenues précedemment, nous allons utiliser la fonction plot().**
+
+```{r}
+par(mfrow=c(2,2))
+
+plot(x = Temperature, y = Amount.Rentals, main = "Correlation", col = "red")
+abline(lm(Amount.Rentals ~ Temperature), col = "blue")
+legend("topleft", 
+       legend = paste("cor = ", round(cor(Temperature, Amount.Rentals), 2), sep = ""),lty = 1, col = "blue")
+
+plot(x = Feeled.Temperature, y = Amount.Rentals, main = "Correlation", col = "blue")
+abline(lm(Amount.Rentals ~ Feeled.Temperature), col = "red")
+legend("topleft", 
+       legend = paste("cor = ", round(cor(Feeled.Temperature, Amount.Rentals), 2), sep = ""),lty = 1, col = "red")
+
+plot(x = Feeled.Raw.Temperature, y = Amount.Rentals, main = "Correlation", col = "green")
+abline(lm(Amount.Rentals ~ Feeled.Raw.Temperature), col = "orange")
+legend("topleft", 
+       legend = paste("cor = ", round(cor(Temperature, Amount.Rentals), 2), sep = ""),lty = 1, col = "orange")
+
+
+plot(x = 1, y = 1, 
+     xlab = "Temperature", ylab = "Amount of rentals", 
+     xlim = c(0, 40), ylim = c(0, 10000), main = "Three correlations combined")
+
+points(Feeled.Raw.Temperature, Amount.Rentals, pch = 8, col = "green")
+points(Temperature, Amount.Rentals, pch = 8, col = "red")
+points(Feeled.Temperature, Amount.Rentals, pch = 8, col = "blue")
+```
+
+
+Dans cette analyse, nous avons corrélé la température brute (converted nomalized temperature), la température ressentie convertie (raw.atemp) et la moyenne des deux. Comme nous pouvons le voir dans les résultats ci dessus, les trois types de températures sont en corrélation positive avec le montant total des locations de vélos. Nous voyons également que la valeur de corrélation n'est pas différente entre les trois types de températures (cor = 0,63). Quoi qu'il en soit, l'analyse montre clairement qu'il existe une relation entre ces deux variables.
+
+
+## **1.3. What are the mean temperature, humidity, windspeed and total rentals per months?**
+
+```{r}
+# Months is coded as 1 to 12
+# Converting month with "merge"
+
+lookup.month<- data.frame("mnth" = c(1:12),
+                          "mnth.name" = c("01Jan", "02Feb", "03March", "04April", "05May", "06June", "07July", "08Aug", "09Sept", "10Oct", "11Nov", "12Dec"), stringsAsFactors = FALSE)
+
+day <- merge(x=day, y= lookup.month, by = 'mnth')
+
+
+# Convert the nomalized windspeed and humidity
+day$raw.windspeed <- (day$windspeed*67)
+day$raw.hum <- (day$hum * 100)
+head(day)
+```
+
+
+```{r}
+month.agg <- day %>% group_by(mnth.name) %>% summarise(
+    mean.temp = mean(raw.temp),
+    mean.hum = mean(raw.hum),
+    mean.windspeed = mean(raw.windspeed),
+    mean.rentals = mean(cnt))
+
+month.agg
+```
+
+###*Nous allons ainsi visualiser les les différentes moyennes associées au mois*
+
+```{r}
+par(mfrow=c(2,2))
+barplot(height = month.agg$mean.rentals,
+        names.arg = month.agg$mnth.name ,col = "red", main = "Mean rentals" )
+
+barplot(height = month.agg$mean.windspeed,
+        names.arg = month.agg$mnth.name,col = "blue", main = "Mean Windspeed (km/h)" )
+
+barplot(height = month.agg$mean.hum,
+        names.arg = month.agg$mnth.name,col = "green", main = "Mean Humidity" )
+
+
+barplot(height = month.agg$mean.temp,
+        names.arg = month.agg$mnth.name,col = "skyblue", main = "Mean Temperature" )
+
+```
+
+Après avoir tracé l'humidité moyenne, la température moyenne, la vitesse moyenne du vent et les locations totales moyennes par mois. Comme nous pouvons le voir, le montant total des locations de vélos augmente avec la température par mois. Alors qu'il semble que les locations soient indépendantes de la vitesse du vent et de l'humidité, car elles sont quasi constantes au fil des mois. Cela confirme également d'une part la forte corrélation entre les locations et la température et d'autre part que le beau temps pourrait être un bon prédicteur.
+
+
+## **1.4. is temperature associated with bike rentals (registered vs. casual)?**
+
+
+```{r}
+# Calculating the correlation between raw.temp and registered users
+cor.reg <- cor.test(x = day$raw.temp, y = day$registered)
+cor.reg
+
+# Calculating the correlation between raw.temp and causal users
+cor.cas <- cor.test(x = day$raw.temp,
+y = day$casual)
+cor.cas
+
+#Calculating min and max
+min(day$raw.temp)
+max(day$raw.temp)
+
+min(day$casual)
+max(day$casual)
+
+min(day$registered)
+max(day$registered)
+```
+
+Les résultats nous montrent que la Temperature et count of bike users ne sont pas corrélés.
+
+Nous pourrions bien comprendre en faisant des visualisations graphiques suivantes:
+
+```{r}
+day.casual <- ts(day$casual)
+day.registered <- ts(day$registered)
+par(mfrow=c(2,1))
+plot(day.temp, day.casual, type="h", xlab="Temperature", ylab="Count of casual users")
+plot(day.temp, day.registered, type="h", xlab="Temperature", ylab="Count of registered users")
+```
+
+```{r}
+seqplot.ts(day.casual, day.registered, ylab = "Casual, Registred", xlab="Time by day")
+```
+
+Nous pourrions aussi voir l'association entre temperature et bike rentals:
+
+```{r}
+# Plotting the association:
+plot(x = 1, y = 1, xlab = "Temperature in Celcius", ylab = "Bike rentals", type = "n", main = "Association between temperature and bike rentals",
+xlim = c(0, 40), ylim = c(0, 7000))
+
+#Adding points to the plot
+day$raw.temp <- (day$temp*41)
+points(day$raw.temp, day$casual, pch = 16, col = "red")
+points(day$raw.temp, day$registered, pch = 16, col = "skyblue")
+
+# Adding a legend to the plot
+legend("topleft",legend = c("casual", "registered"), col = c("red","skyblue"), pch = c(16, 16), bg = "white")
+
+# Calculating the correlation between raw.temp and registered users and between raw.temp and causal users
+cor.reg <- cor.test(x = day$raw.temp, y = day$registered)
+cor.reg
+
+# Adding Correlation line and the correlation value to the plot
+abline(lm(day$registered ~ day$raw.temp), lty = 6, col = "blue")
+
+abline(lm(day$casual ~ day$raw.temp), lty = 6, col = "orange")
+
+reg <- paste("cor = ", round(cor(day$registered, day$raw.temp), 2), sep = "")
+cas <- paste("cor = ", round(cor(day$casual, day$raw.temp), 2), sep = "")
+
+legend("left",legend = c(cas, reg) , col = c('orange', 'blue'),pch = c(16, 16), bg = "white")
+```
+
+Nous avons recherché l'association entre les deux groupes (registered & casual) en fonction de la température. 
+Comme nous pouvons le voir sur le graphique ci-dessus, au fur et à mesure que la température augmente, le nombre de locations de vélos augmente également chez les deux utilisateurs. Il semble que les utilisateurs enregistrés (registered) louent encore plus de vélos que les utilisateurs occasionnels (casual). C’est pourquoi nous avons calculé la corrélation entre les deux utilisateurs et la température réelle. Il montre que la corrélation est égale pour les deux groupes (cor = 0,54). La différence de présentation pourrait être biaisée en raison du nombre inégal d'utilisateurs enregistrés (max = 6946) et occasionnels (max = 3410). Cependant, le graphique confirme en partie le rôle important de la température.
+
+
+
+## **1.5. Plot the cnt vs dteday and examine its patterns and irregularities**
+
+```{r}
+par(mfrow=c(1,1))
+plot(day$dteday, day$cnt, type="h", col="blue")
+```
+
+## **1.6. Clean up any outliers or missing values if needed**
+
+Nous allons créer deux nouvelles séries chronologiques: **day.cnt.raw** contient la série chronologique initiale (avant le nettoyage) et **day.dteday** pour la dimension temporelle.
+
+```{r}
+day.cnt.raw <- ts(day$cnt)
+day.dteday <- ts(day$dteday)
+plot(day.dteday, day.cnt.raw, col="blue")
+```
+
+
+Ensuite, nous allons supprimer les contours en utilisant *tsclean ()*. Nous allons également extraire les valeurs aberrantes.
+
+```{r}
+day.cnt <- tsclean(day.cnt.raw)
+outliners <- day.cnt.raw[day.cnt!=day.cnt.raw]
+outliners
+```
+
+## **1.7. Smoothing of time series and compare with the original**
+
+Pour cette partie, nous allons utiliser le type de lissage suivant: Simple Exponential Smoothing
+
+```{r}
+day.cnt.smoothed.se <- HoltWinters(day.cnt, beta=FALSE, gamma=FALSE)
+day.cnt.smoothed.se
+```
+
+
+```{r}
+plot(day.cnt.smoothed.se)
+```
+
+
+
+# **2. Using the smoothed version of cnt**
+
+## **choose the smoothing method**
+Pour cette partie, nous allons utiliser le type de lissage suivant: Simple Moving Average avec ordre 7.
+
+Nous allons utiliser la série temporelle lissée d'ordre 7, que nous nommerons ci-après cnt_ma.
+Nous créons d'abord la série chronologique lissée avec l'ordre 7.
+
+```{r}
+cnt_ma <- SMA(day.cnt,n=7)
+plot(cnt_ma, col="blue")
+```
+
+## **2.1. Add the right frequency to your smoothed time series**
+
+Nous allons transformer cnt_ma en une série temporelle de fréquence 30 (parceque nous avons 30 jours dans le mois) nommée count_ma.
+
+```{r}
+count_ma <- ts(day.cnt, frequency = 30)
+plot(count_ma, col="blue")
+```
+
+## **2.2.1. What could you tell about this new time series in term of seasonality?**
+
+Oui, la série chronologique count_ma montre une tendance générale à l'augmentation des loyers au cours des deux premières saisons, puis à la diminution au cours des deux dernières saisons. La série chronologique montre également un cycle répétitif à court terme sur les deux années.
+
+### *Utilisez decompose () pour examiner et éventuellement supprimer des composants de la série*
+
+```{r}
+count_ma.decomposed <- decompose(count_ma)
+plot(count_ma.decomposed, col="blue")
+```
+
+La composante saisonnière confirme notre hypothèse et révèle un cycle mensuel saisonnié encore plus intéressant.
+
+### *Créez une série chronologique deseasonal_cnt en supprimant le composant saisonnié*
+
+```{r}
+deseasonal_cnt <- count_ma - count_ma.decomposed$seasonal
+plot(count_ma, col = "blue", xlab="Time by months")
+legend(1, 8600, legend=c("count_ma", "deseasonal_cnt"), col=c("blue", "yellow"), lty=1:2, cex=0.8)
+lines(deseasonal_cnt, col = 'yellow')
+```
+
+
+
+## **2.2.2. What could you tell about this new time series in term of stationarity?**
+
+```{r}
+adf.test(count_ma, alternative = "stationary")
+```
+
+Les résultats ci dessus nous montre que *la p-value est supérieure à 0,05*, donc count_ma n'est pas stationnaire ACF décrit dans quelle mesure la valeur actuelle de la série est liée à ses valeurs passées. Ici, cela confirme également que la série n'est pas stationnaire puisque l'autocorrélation diminue progressivement.
+
+```{r}
+acf(count_ma)
+```
+
+```{r}
+pacf(count_ma)
+```
+
+### *No-Stationarity to Stationarity*
+
+Pour rendre la série chronologique stationnaire, nous utiliserons la différenciation. 
+La différenciation consiste à soustraire chaque point de données de la série de son successeur. Tout d'abord, nous devons savoir combien de différences sont nécessaires.
+
+```{r}
+count_ma.diff1 <- diff(count_ma,differences = 1)
+adf.test(count_ma.diff1, alternative = "stationary")
+```
+
+
+La p-value est inférieure à 0,05. **count_ma.diff1** est stationnaire. 
+Nous concluons que nous n'avons besoin que d'une seule différenciation pour rendre count_ma stationnaire.
+
+# **3. Forecasting with ARIMA Models**
+
+## **3.I. Fitting ARIMA model**
+
+###*Fit an ARIMA model to deseasonal_cnt*
+
+Tout d'abord, nous devons vérifier si la série chronologique a une tendance.
+
+```{r}
+deseasonal_cnt.decomposed <- decompose(deseasonal_cnt)
+plot(deseasonal_cnt.decomposed, col="blue")
+```
+
+**deseasonal_cnt** n'a pas de tendance mais une saisonnalité.
+
+Nous vérifions maintenant si la série chronologique est stationnaire.
+
+```{r}
+adf.test(deseasonal_cnt, alternative = "stationary")
+```
+
+```{r}
+acf(deseasonal_cnt)
+```
+
+
+```{r}
+pacf(deseasonal_cnt)
+```
+
+**deseasonal_cnt** n'est pas stationnaire, nous devons faire une différenciation.
+
+```{r}
+deseasonal_cnt.diff1 <- diff(deseasonal_cnt,differences = 1)
+adf.test(deseasonal_cnt.diff1, alternative = "stationary")
+```
+
+**deseasonal_cnt.diff1** est stationnaire, puisque sa p-value est inférieure à 0,05 .
+**adf.test** renvoie également l'ordre de décalage q = 8, et nous avons d = 1. 
+À partir de **PACF**, il est clair que dans les 6 décalages, l'AR est significatif. ce qui signifie que nous pouvons utiliser p = 6.
+
+```{r}
+deseasonal_cnt.arima <- arima(deseasonal_cnt.diff1, order = c(6,0,8))
+```
+
+```{r}
+deseasonal_cnt.arima
+```
+
+Nous pourrions suivre d'autres processus pour choisir le meilleur modèle, et donc faire plusieurs itérations.
+
+## **3.II. Fit an ARIMA with Auto-ARIMA**
+
+###*Use auto.arima() function to fit an ARIMA model of deseasonal_cnt*
+
+```{r}
+deseasonal_cnt.autoarima <- auto.arima(deseasonal_cnt, seasonal = FALSE)
+deseasonal_cnt.autoarima
+```
+
+###*Check residuals*
+```{r}
+deseasonal_cnt.autoarima.residuals <- deseasonal_cnt.autoarima$residuals
+tsdisplay(deseasonal_cnt.autoarima.residuals, main='(1,1,1) Model Residuals')
+```
+
+```{r}
+hist(deseasonal_cnt.autoarima.residuals)
+```
+
+
+```{r}
+shapiro.test(deseasonal_cnt.autoarima.residuals)
+```
+
+Les résidus ne sont pas normalement distribués. La fonction **auto.arima ()** ne nous a pas donné un bon modèle. Nous devrions faire des itérations.
+
+## **3.III. Evaluate and iterate**
+
+###*Refit model if needed. Compare model errors and fit criteria such as AIC or BIC*
+
+```{r}
+aic.values <- c()
+for (p in (0:9)){
+  deseasonal_cnt.arima <- arima(deseasonal_cnt, order = c(p,0,8))
+  aic.values <- c(aic.values, deseasonal_cnt.arima$aic)
+}
+```
+
+
+```{r}
+which.min(aic.values)
+```
+
+L'ordre du modèle qui a donné la valeur AIC minimale est p = 8, d = 0 et q = 8. Maintenant, nous allons former le modèle à utiliser pour la prévision.
+
+```{r}
+deseasonal_cnt.arima <- arima(deseasonal_cnt, order = c(8,0,8))
+deseasonal_cnt.arima
+```
+
+###*Calculate forecast using the chosen model*
+
+```{r}
+deseasonal_cnt.cast <- forecast(deseasonal_cnt.arima)
+plot(deseasonal_cnt.cast)
+```
+
+```{r}
+acf(deseasonal_cnt.cast$residuals, lag.max=20)
+```
+
+```{r}
+Box.test(deseasonal_cnt.cast$residuals, lag=20, type="Ljung-Box")
+```
+
+###*Plot both the original and the forecasted time series*
+
+```{r}
+plot(deseasonal_cnt, col="red") # original
+legend(1, 8600, legend=c("Original", "Fitted"), col=c("red", "blue"), lty=1:2, cex=0.8)
+lines(fitted(deseasonal_cnt.arima), col="blue") # fitted
+```
+
+
+## **3.IV. Forecasting**
+
+### *Split the data into training and test times series*
+
+```{r}
+end.time = time(deseasonal_cnt)[700]
+train.set <- window(deseasonal_cnt, end=end.time)
+test.set <- window(deseasonal_cnt, start=end.time)
+```
+
+
+### *fit an Arima model, manually and with Auto-Arima on the training part*
+
+```{r}
+manual.fit <- Arima(train.set, order=c(8, 0, 8))
+manual.fc <- forecast(manual.fit, h=32)
+print(paste("Accuracy of the manual Arima model : ", accuracy(manual.fc, test.set)[2,"RMSE"]))
+```
+
+
+```{r}
+auto.fit <- auto.arima(train.set, seasonal = FALSE)
+auto.fc <- forecast(auto.fit, h=32)
+print(paste("Accuracy of the auto Arima model : ", accuracy(auto.fc, test.set)[2,"RMSE"]))
+```
+
+
+```{r}
+plot(deseasonal_cnt, col="red") # original
+legend(1, 8600, legend=c("Original", "Manual Arima"), col=c("red", "blue"), lty=1:2, cex=0.8)
+lines(fitted(manual.fc), col="blue") # manuall arima
+```
+
+```{r}
+plot(deseasonal_cnt, col="red") # original
+legend(1, 8600, legend=c("Original", "Auto Arima"), col=c("red", "green"), lty=1:2, cex=0.8)
+lines(fitted(auto.fit), col="green") # auto arima
+```
+
+### *Forecast the next 25 observation and plot the original ts and the forecasted one*
+
+```{r}
+deseasonal_cnt.forecast.manual <- forecast(manual.fit, h=25)
+deseasonal_cnt.forecast.auto <- forecast(auto.fit, h=25)
+
+par(mfrow=c(2,1))
+plot(deseasonal_cnt.forecast.manual, main = "Forecast with manual Arima", include = test.set)
+plot(deseasonal_cnt.forecast.auto, main = "Forecast with auto Arima", include = test.set)
+```
+
+Selon les différents résultats que nous avions obtenus ci dessus,nous pouvons conclure que le modèle manuel Arima donne une prévision plus naturelle que celle automatique Arima.
