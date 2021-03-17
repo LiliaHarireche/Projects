@@ -1,0 +1,570 @@
+---
+title: "Text mining : exploration statistique d’un corpus de courriels"
+#author: "Lilia HARIRECHE"
+#date: "15/01/2021"
+output: html_document
+---
+
+  
+                        Douaa BENHADDOUCHE - Lilia HARIRECHE - Antoine RODRIGUEZ
+                        
+                                              MLDS FA
+                                              
+
+# **Partie A: Les données spam.**
+
+## (1) La nature des variables.
+
+```{r}
+spam=read.table("https://www.math.univ-toulouse.fr/~besse/Wikistat/data/spam.dat",header=TRUE)
+
+dim(spam)  # 4601   58
+ # summary(spam)
+
+spam[,1]=as.factor(spam[,1])
+```
+
+Les variables sont quantitatives. (voir le pdf)
+La variable 'spam' est binaire : 1 désigne un spam et 0 désigne un mail classique. 
+
+## (2) Standardisation
+
+Vu que les variables (sauf spam) sont toutes dissymétriques et comportent beaucoup de “O”, 
+nous devons faire une standardisation de celles-ci.
+
+```{r}
+Lspam=data.frame("spam"=spam[,1],log(1+spam[,2:58]))
+```
+
+
+## (3) Utilisation de Factoshiny
+
+```{r message=FALSE, warning=FALSE}
+library(Factoshiny)
+```
+
+```{r eval=FALSE}
+res=Factoshiny(spam)
+```
+
+Le rapport automatique de Factoshiny (où la variable spam est supplémentaire) 
+`Rapport_FactoShiny_A_3.html`, nous montre une legère séparation des spams du reste des mails 
+par l'axe de la seconde composante principale. (Peut être plus précisément une 
+séparartion par une droite affine passant par l'origine dans le premier plan factoriel)
+
+## (4) Execution du code du document
+
+### Approche quantitative
+
+```{r message=FALSE, warning=FALSE}
+library(FactoMineR)
+```
+
+```{r message=FALSE}
+#pca spam
+res.pca=PCA(spam,scale.unit = FALSE,quali.sup=1)
+res.pca1=PCA(spam,scale.unit = TRUE,quali.sup=1)
+```
+
+
+```{r message=FALSE}
+#pca Lspam
+res.pca=PCA(Lspam,scale.unit = FALSE, quali.sup=1)
+res.pca=PCA(Lspam,scale.unit = TRUE,quali.sup=1)
+```
+
+Nous remarquons que l'ACP appliquée sur le jeu de données après *normalisation et standardisation* donne des résultats plus clairs par rapports aux autres. Nous pourrons ainsi distinguer, selon *le graphe des individus*, qu'il existe deux classe, ainsi *le graphe des variables* montre les différentes variables qui contribuent à la création des classes (0) et (1) respectivement.
+
+A cause du nombre de variables, les résultats obtenus ci dessus ne sont pas satisfaisants, donc afin de pouvoir intérpreter les résultats nous allons opté pour la classification des variables. 
+
+- *Classification des variables*
+
+```{r}
+dist.var<-as.dist(1-cor(Lspam[2:58])**2)
+clas.var<-hclust(dist.var,method="ward.D")
+plot(clas.var)
+```
+
+Après avoir essayé d'autres méthodes en changeant le critère de la distance et d'aggrégation, nous remarquons que *la distance euclidienne* et *le critère de ward.D* donnent des résultats plus pertinents.
+
+Le dendrogramme ci dessus révéle qu'il y a deux classes de variables, cela est montré aussi dans le graphe des variables obtenu précédemment dans L'ACP où deux groupes de variables sont corrélés par rapport à l'axe1 et l'axe2 respectivement.
+
+
+```{r}
+# MDS: Méthode factorielle de réduction de dimension pour l’exploration statistique d’une matrice de distances ou dissemblances entre individus
+
+rS = cor(Lspam[2:58])
+dS2=sqrt(1-rS**2)
+dN=dimnames(Lspam[2:58])[[2]]
+mdspam= cmdscale(dS2, k=2)  # 2 classes
+plot(mdspam, type="n", xlab="", ylab="",main="")
+text(mdspam,dN)
+abline(v=0,h=0)
+
+
+classes <- cutree(clas.var,k=4)   # 4 classes
+sort(classes)
+names(classes[classes==2]) #variables de la classe 2
+coul = classes
+plot(mdspam, type="n", xlab="Dimension 1", ylab="Dimension 2", main="CAH euclid")
+text(mdspam,dN,col=coul)
+
+```
+
+### Approche par NMF
+
+Le principe est de rechercher deux matrices de faible rang r de telle sorte que leur produit approche au mieux les valeurs observées. 
+Contrairement à L’ACP où les facteurs sont recherchés orthogonaux 2 à 2, cette méthode impose la contrainte de non négativité des matrices pour construire les facteurs de la décomposition. Ces facteurs ne permettent plus de représentation comme en ACP ou en MDS mais au moins une classification non supervisée tant des lignes que des objets lignes et colonnes de la matrice.
+
+```{r message=FALSE, warning=FALSE, eval=FALSE}
+library(NMF)
+```
+
+*Problème d'installation du package. Impossibilité de poursuivre*
+
+
+
+
+# **Partie B: La base de données spam brute (SUJET 1)**
+
+## **Chargement des données**
+
+```{r setup, message=FALSE, warning=FALSE}
+library(R.matlab)
+library(FactoMineR)
+library(Factoshiny)
+library(readr)
+library(CoClust)
+library(skmeans)
+library(caret)
+library(tm)
+library(aricode)
+library(NbClust)
+library(Rmixmod)
+library(mclust)
+library(blockmodels)
+library(Rtsne) # pour réduction de dimension t-SNE
+library(factoextra) # fviz_pca_ind
+library(movMF)
+library(blockcluster)
+
+#for plotcluster()
+library(cluster)
+library(fpc)
+
+# solve_LSAP
+library(clue)
+```
+
+
+```{r}
+#Antoine
+setwd ('C:/Users/rodri/Desktop/TRAVAUXENCOURS/__Projet_TextMining')
+spam<-read.csv('spam.csv')
+```
+
+```{r eval=FALSE}
+setwd ('E:/M2_MLDS_FA/Texte mining')
+spam<-read.csv('spam.csv')
+```
+
+
+## **Prétraitement et préparation des données spam**
+
+
+Avant d'appliquer un algorithme de classification des données, nous allons tout 
+d'abord faire quelques prétraitements, dont la construction de la matrice DocumentTerm,
+la suppression des lignes contenant que des zéros, sur la matrice obtenue,
+ainsi que la binarisation des classes.
+
+
+```{r}
+data.spam  = spam[,2] #récuperer les mails
+length(data.spam)
+m <- enc2utf8(data.spam)
+```
+
+```{r warning=FALSE}
+# transform texts to corpus
+mails <- Corpus(VectorSource(m))
+# replace special characters by space 
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+mails <- tm_map(mails, toSpace, "/")
+mails <- tm_map(mails, toSpace, "@")
+mails <- tm_map(mails, toSpace, "\\|")
+```
+
+```{r warning=FALSE}
+# corpus cleaning
+# lower characters
+mails <- tm_map(mails, content_transformer(tolower))
+# delete numbers
+mails <- tm_map(mails, removeNumbers)
+# delete english stopwords
+mails <- tm_map(mails, removeWords, stopwords("english"))
+# delete desired words may be 
+#mails <- tm_map(mails, removeWords, c("blabla1", "blabla2")) 
+# delete ponctuation
+mails <- tm_map(mails, removePunctuation)
+# delete supplementary spaces
+mails <- tm_map(mails, stripWhitespace)
+# Text stemming
+# mails <- tm_map(mails, stemDocument)
+```
+
+```{r warning=FALSE}
+#matrix Document_Term
+mdt <- DocumentTermMatrix(mails, control=list(weighting=weightTfIdf))
+
+#delete 99% of sparse data
+mdt = removeSparseTerms(mdt, 0.99)
+
+spam_m <- as.matrix(mdt)  # désparsifie la matrice
+print(dim(spam_m))
+```
+
+```{r warning=FALSE}
+# convert ham  et spam to 1 and 2 respectively
+spam$v1[spam$v1 == 'ham'] = 1
+spam$v1[spam$v1 == 'spam'] = 2
+
+# index of lines when somme(lines) ==0
+lines <- unique(which(rowSums(spam_m) == 0, arr.ind = FALSE)) #get 0 rows
+length(lines)
+
+#delete lines according to index obtained above
+true.labels = as.numeric(spam$v1[-lines])
+spam.m = spam_m[-lines,]
+dim(spam.m)
+```
+
+```{r}
+spam.m[1:5,1:7]
+```
+
+## **(1) Application d'une méthode d’analyse factorielle appropriée**
+
+```{r eval=FALSE}
+res = Factoshiny(spam.m)
+```
+
+<!-- table de contingence CA -->
+
+Suite à des problèmes rencontrés avec le chargement de *Factoshiny*, 
+*"Error in lapply(X = X, FUN = FUN, ...) : objet 'newdataCAshiny' introuvable"* dans l'utilisation de l'annalyse de correspondance.
+
+Nous avons choisi directement d'appliquer la méthode d'**Analyse factorielle des correspondances (AFC/CA)**, sachant que cette méthode est adéquate avec les données de type qualitatif, aussi avec les tables de contingence ou assimilée, comme c'est le cas de notre jeu de données.
+
+
+```{r warning=FALSE}
+#AFC sur spam_mat   
+res.ca.spam = CA(spam.m, axes = c(1,2))
+```
+
+### Autres affichages
+
+```{r}
+plot.CA(res.ca.spam, selectCol='contrib 2', selectRow='contrib 10',
+        unselect=0, title="Graphe de l'AFC montrant les \n plus grandes contributions")
+```
+
+```{r}
+plot.CA(res.ca.spam,selectCol='cos2 0.4',selectRow='cos2 0.4',
+        title="Graphe de l'AFC suivant le cos2",
+        habillage='cos2')
+```
+Remarquons les valeurs rouge ayant un cos2 plus proche de 1 contribue le plus a 
+la creation de l'axe (tout comme dans le graphe précédent).
+
+### Tableaux des contributions et qualités de représentation (cos2)
+
+```{r}
+res.ca.spam$col$contrib[1:10,1:2]
+```
+```{r}
+res.ca.spam$col$cos2[1:10,1:2]
+```
+
+## **(2) Application un algorithme de classification approprié : skmeans**
+
+Nous cette partie nous avons choisi d'appliquer l'algorithme skmeans, 
+car il correspond parfaitement à la classification Documents-Termes 
+(données directionnelles).
+
+- **Application de l'algorithme skmeans avec 2 classes**
+
+```{r warning=FALSE}
+# skmeans
+set.seed(42)
+spam.clust2 = skmeans(spam.m, 2)
+#récuperer les predicted labels pour skmeans à 2 classes
+predicted.labels.clust2 = spam.clust2$cluster
+```
+
+**- construction de la matrice de confusion sur la base de la variable spam**
+
+```{r}
+#confusionMatrix
+cm = table(predicted.labels.clust2, true.labels)
+lin_assignement = solve_LSAP(cm, maximum=TRUE) # réalise algorithme hongrois
+# pour obtenir une matrice qui maximise les valeurs diagonales
+cm = table(lin_assignement[predicted.labels.clust2], true.labels)
+print(cm)
+```
+On identifie un taux de False Negatives assez élevés (tout comme sur le tableau complet)
+
+**- Visualisation des clusters**
+```{r}
+par(mfrow=c(1,2)) 
+plotcluster(spam.m, true.labels, main='Partition réelle')
+plotcluster(spam.m, predicted.labels.clust2, main='Labels prédits par skmeans')
+```
+
+**- Calculer le taux d’accuracy, NMI et ARI**
+```{r}
+#accuracy
+accuracy <- sum(diag(cm))/length(true.labels)
+print(accuracy)
+#NMI
+
+nmi <- NMI(predicted.labels.clust2, true.labels)
+print(nmi)
+
+#ARI
+ari <- ARI(predicted.labels.clust2, true.labels)
+print(ari)
+```
+Les résultats ne sont pas très bon notamment à cause de la réduction de tableau que nous avons fait au tout début.
+
+
+
+## **(3) Skmeans à 3 classes**
+
+```{r}
+# skmeans
+set.seed(42)
+spam.clust3 = skmeans(spam.m,3)
+#récuperer les predicted labels 
+predicted.labels.clust3 = spam.clust3$cluster
+
+#table de confusion
+cm2 = table(predicted.labels.clust3, true.labels)
+print(cm2)
+```
+
+**- Visualiser les résultats**
+
+```{r}
+plotcluster(spam.m, predicted.labels.clust3, main='Labels prédits par skmeans à 3 classes')
+```
+
+En appliquant l'algorithme skmeans avec nombre de clusters égale à 3,
+nous remarquons qu'il existe des mails qui n'ont pas pu être classés dans les 
+deux classes *spam* et *ham* et que ses derniers semblent aussi formé un cluster 
+distinct.
+
+
+**NOTE IMPORTANTE**
+Nous avions initialiser notre matrice avec une pondération tf-idf, 
+une réexécution avec une pondération "classique (code-ci dessous) 
+nous donne des résultats et des interprétations
+similaires dans les questions précédentes.
+
+```{r eval=FALSE}
+mdt <- DocumentTermMatrix(mails, control=list())
+```
+
+
+## **(4) Appliquer un co-clustering approprié**
+
+
+### Coclust
+
+```{r eval=FALSE}
+#choix du packages à utiliser, (coclust)
+clust <- CoClust(spam.m, dimset = 2:4, noc=2, copula="frank",
+                 method.ma="empirical", method.c="ml",writeout=1)
+#save
+saveRDS(clust,"./clust")
+```
+L'execution de cette fonction ne fonctionne pas et nous rencontrons des messages comme :
+*Hessian matrix not invertible* ou *possible convergence problem* qui doivent être due à la spartité du problème.
+
+### Blockcluster
+
+```{r}
+coclust.spam = coclusterContingency(spam.m, nbcocluster=c(2,2))
+```
+```{r}
+coclust.spam@rowclass[1:100]
+```
+
+```{r}
+# changement de valeurs pour fit avec les true.labels
+predicted.spam.m = coclust.spam@rowclass
+predicted.spam.m[predicted.spam.m == 1] <-2
+predicted.spam.m[predicted.spam.m == 0] <-1 
+```
+
+
+## **(5) Visualiser ces classes à l’aide de méthodes de réduction de dimension**
+
+Nous avions appliquer depuis le début une pondération tf-idf 
+(nous répondrons à la question 6)
+
+
+Visualisons les classes obtenues à l'aide de réductions de dimensions
+
+### Visualisation grace à t-SNE
+
+La fonction suivante nous permettra de visualiser : 
+
+```{r}
+plot_tsne <- function (tsne, predicted.classes, true.classes){
+  par(mfrow=c(1,2))
+  plot(tsne$Y,
+       col=predicted.classes,
+       xlab="1ere composante",
+       ylab="2eme composante",
+       cex.main = 0.9,
+       cex.lab = 0.9,
+       main="Classes prédites sur le plan produit par t-SNE")
+  plot(tsne$Y,
+       col=true.classes,
+       xlab="1ere composante",
+       ylab="2eme composante",
+       cex.main = 0.9,
+       cex.lab = 0.9,
+       main="Vraies classes sur le plan produit par t-SNE")
+}
+```
+
+```{r eval=FALSE}
+tsne.spam.m=Rtsne(spam.m, dim=2, perplexity=50, check_duplicates = FALSE)
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(tsne.spam.m, 'resultats/tsne.spam.m')
+```
+
+```{r include=FALSE}
+tsne.spam.m <- readRDS('resultats/tsne.spam.m')
+```
+
+
+```{r}
+plot_tsne(tsne.spam.m, predicted.spam.m, true.labels)
+```
+
+
+### Visualisation sur le premier plan factoriel de l'ACP
+
+```{r}
+pca.spam.m = PCA(spam.m, graph=FALSE)
+```
+
+```{r}
+fviz_pca_ind(pca.spam.m,
+             geom.ind = "point",
+             col.ind = true.labels, # colorer by groups
+             legend.title = "Spam",
+             title = 'Vrais labels sur l\'ACP') 
+```
+```{r}
+fviz_pca_ind(pca.spam.m,
+             geom.ind = "point",
+             col.ind = predicted.spam.m,
+             legend.title = "Spam",
+             title = 'Labels prédits sur l\'ACP') 
+```
+
+## **(6) Même étape avec une autre pondération**
+
+Appliquons une autre pondération :
+
+```{r warning=FALSE}
+#matrix Document_Term
+mdt <- DocumentTermMatrix(mails, control=list())
+```
+
+```{r warning=FALSE}
+#delete 99% of sparse data
+mdt = removeSparseTerms(mdt, 0.99)
+
+spam_m <- as.matrix(mdt) 
+print(dim(spam_m))
+```
+```{r warning=FALSE}
+# convert ham  et spam to 1 and 2 respectively
+spam$v1[spam$v1 == 'ham'] = 1
+spam$v1[spam$v1 == 'spam'] = 2
+
+# index of lines when somme(lines) ==0
+lines <- unique(which(rowSums(spam_m) == 0, arr.ind = FALSE)) #get 0 rows
+length(lines)
+
+#delete lines according to index obtained above
+true.labels = as.numeric(spam$v1[-lines])
+spam.m2 = spam_m[-lines,]
+dim(spam.m2)
+```
+### Visualisation grace à t-SNE
+
+```{r eval=FALSE}
+tsne.spam.m2=Rtsne(spam.m2, dim=2, perplexity=50, check_duplicates = FALSE)
+```
+
+```{r eval=FALSE, include=FALSE}
+saveRDS(tsne.spam.m2, 'resultats/tsne.spam.m2')
+```
+
+```{r include=FALSE}
+tsne.spam.m2 <- readRDS('resultats/tsne.spam.m2')
+```
+
+
+```{r}
+plot_tsne(tsne.spam.m2, predicted.spam.m, true.labels)
+```
+
+### Visualisation sur le premier plan factoriel de l'ACP
+
+```{r}
+pca.spam.m2 = PCA(spam.m2, graph=FALSE)
+```
+
+```{r}
+fviz_pca_ind(pca.spam.m2,
+             geom.ind = "point",
+             col.ind = true.labels, # colorer by groups
+             legend.title = "Spam",
+             title = 'Vrais labels sur l\'ACP') 
+```
+
+```{r}
+fviz_pca_ind(pca.spam.m2,
+             geom.ind = "point",
+             col.ind = predicted.spam.m,
+             legend.title = "Spam",
+             title = 'Labels prédits sur l\'ACP') 
+```
+Selon les résultats obtenus ci-dessus on remarque que le coclustering identifie 
+beaucoup moins de spams.
+
+## **(7) Appliquer le modèle de von-Mises Fischer**
+
+Pour appliquer le modèle de von-Mises Fisher, nous avons choisi d'utiliser l'algorithme EM avec 10 itérations.
+
+
+```{r}
+vMF_model <- lapply(1:2, function(K) movMF(spam.m, k = K, control= list(E = "hardmax", nruns = 10))) #hardmax pour choisir l'algo EM
+#The BIC values for the different mixtures can be compared using
+sapply(vMF_model, BIC)
+```
+
+Dans ce qui suit, nous examinons les 10 mots les plus importants de chaque classe 1 et 2 correspondants aux classes ham et spam respectivement.
+
+```{r}
+model = movMF(spam.m, 2, control = list(E = "hardmax", maxiter = 5))
+apply(coef(model)$theta, 1, function(x) colnames(coef(model)$theta)[order(x, decreasing = TRUE)[1:10]])
+```
