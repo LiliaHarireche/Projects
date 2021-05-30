@@ -1,0 +1,20 @@
+# data
+/data/
+/old/
+/notebooks/.ipynb_checkpoints/
+
+# Antoine
+/old/
+/venv/
+/.idea/
+*.pyc
+
+
+/old_training/
+/study/data_test/useless/
+/results_training/npz/
+/results_training/pkl/
+
+# Lilia
+/.spyproject/
+
